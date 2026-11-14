@@ -1,0 +1,17 @@
+{
+  "name": "geo-grid-warehouse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "地理点事件等经纬网加工、多级格网入仓与守恒核对（零第三方依赖）",
+  "scripts": {
+    "sync-engine": "node -e \"require('fs').copyFileSync('src/grid.js','src/public/grid.js')\"",
+    "prestart": "npm run sync-engine",
+    "start": "node src/server.js",
+    "demo": "node scripts/demo.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

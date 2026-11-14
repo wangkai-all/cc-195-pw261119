@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地理点加工仓 · 等经纬网多级入仓与守恒核对</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">▦</span>
+      <div>
+        <h1>地理点加工仓</h1>
+        <p class="subtitle">等经纬网 · 半开区间边界 · 多级格网 + 时间分区入仓 · 三口径守恒核对（纯本地，无地图服务）</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="btn-theme" class="btn ghost" type="button">切换主题</button>
+    </div>
+  </header>
+
+  <section class="conservation-banner" id="conservation-banner">
+    <div class="banner-item"><span class="banner-num" id="kpi-total">–</span><span class="banner-label">事件总数</span></div>
+    <div class="banner-item"><span class="banner-num" id="kpi-active">–</span><span class="banner-label">在册有效</span></div>
+    <div class="banner-item warn"><span class="banner-num" id="kpi-quar">–</span><span class="banner-label">开放隔离</span></div>
+    <div class="banner-item"><span class="banner-num" id="kpi-versions">–</span><span class="banner-label">数据版本</span></div>
+    <div class="banner-status" id="kpi-conservation">
+      <span class="status-dot"></span><span id="kpi-conservation-text">尚未核对</span>
+    </div>
+  </section>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="ingest" type="button">① 导入与版本</button>
+    <button class="tab" data-tab="grid" type="button">② 格网视图</button>
+    <button class="tab" data-tab="table" type="button">③ 单元表格</button>
+    <button class="tab" data-tab="reconcile" type="button">④ 守恒核对</button>
+    <button class="tab" data-tab="quarantine" type="button">⑤ 隔离区 / 审计</button>
+  </nav>
+
+  <!-- ① 导入与版本 -->
+  <section class="panel active" data-panel="ingest">
+    <div class="grid-two">
+      <div class="card">
+        <h2>导入事件</h2>
+        <p class="hint">支持 JSON 数组（字段 <code>event_id, lon, lat, timestamp</code>）或 CSV。同 <code>event_id</code> 重复且内容一致 → 幂等忽略；坐标不同 → 先撤回旧格网再计入新格网。</p>
+        <div class="row">
+          <label class="upload-label btn primary" for="file-input">选择 JSON / CSV 文件</label>
+          <input id="file-input" type="file" accept=".json,.csv,text/csv,application/json" hidden>
+          <button class="btn" id="btn-paste-sample" type="button">填入示例</button>
+          <button class="btn danger" id="btn-clear" type="button">清空仓库</button>
+        </div>
+        <textarea id="import-text" rows="10" spellcheck="false" placeholder='[{"event_id":"E900","lon":12.5,"lat":-30.2,"timestamp":"2026-11-14T08:00:00Z"}]'></textarea>
+        <div class="row">
+          <select id="import-format">
+            <option value="json">JSON</option>
+            <option value="csv">CSV</option>
+          </select>
+          <button class="btn primary" id="btn-import" type="button">导入</button>
+        </div>
+        <div id="import-report" class="report" hidden></div>
+
+        <h3 class="mt">一键演示脚本</h3>
+        <div class="row">
+          <button class="btn" id="btn-demo-load" type="button">1. 载入演示数据（边界点/重复/越界）</button>
+          <button class="btn" id="btn-demo-revise" type="button">2. 增量修订批次</button>
+          <button class="btn" id="btn-demo-v2" type="button">3. 规则改版 v2</button>
+        </div>
+        <p class="hint">演示数据固定可复现，配套命令行版：<code>npm run demo</code>。</p>
+      </div>
+
+      <div class="card">
+        <h2>数据版本与格网布局</h2>
+        <div id="layout-list" class="layout-list"></div>
+        <h3 class="mt">规则改版 → 新建版本（不覆盖旧布局）</h3>
+        <div class="form-grid">
+          <label>版本 ID<input id="new-vid" type="text" value="v2" placeholder="v2"></label>
+          <label>细分因子 factor
+            <select id="new-factor"><option value="2">2（四叉）</option><option value="3">3（九分）</option><option value="4">4</option></select>
+          </label>
+          <label>最大层级<input id="new-maxlevel" type="number" min="0" max="6" value="2"></label>
+          <label class="span2">改版说明<input id="new-desc" type="text" placeholder="例如：加密城市区域，改用九分细分"></label>
+        </div>
+        <button class="btn primary" id="btn-create-layout" type="button">创建新版本并回填在册事件</button>
+        <p class="hint mt">各版本事实表物理隔离，所有查询带版本标识，单元 ID 形如 <code>v1/L2:c8,r4</code>，绝不混用布局。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ② 格网视图 -->
+  <section class="panel" data-panel="grid">
+    <div class="card">
+      <div class="filter-bar">
+        <label>版本<select id="grid-version"></select></label>
+        <label>层级<select id="grid-level"></select></label>
+        <label>时间分区<select id="grid-partition"><option value="">全部分区</option></select></label>
+        <span class="spacer"></span>
+        <span class="hint" id="grid-meta"></span>
+      </div>
+      <div class="chart-wrap">
+        <svg id="grid-svg" role="img" aria-label="等经纬网单元计数热力图"></svg>
+        <div id="grid-tooltip" class="tooltip" hidden></div>
+      </div>
+      <div class="legend">
+        <span class="legend-title">单元事件数</span>
+        <div id="legend-ramp" class="legend-ramp"></div>
+        <span class="legend-bounds"><span id="legend-min">0</span> – <span id="legend-max">0</span></span>
+        <span class="hint">空格 = 0 事件；点击单元查看事件明细。投影：等距矩形（无地图服务）。</span>
+      </div>
+      <div id="cell-detail" class="cell-detail" hidden></div>
+    </div>
+  </section>
+
+  <!-- ③ 单元表格 -->
+  <section class="panel" data-panel="table">
+    <div class="card">
+      <div class="filter-bar">
+        <label>版本<select id="table-version"></select></label>
+        <label>层级<select id="table-level"></select></label>
+        <label>时间分区<select id="table-partition"><option value="">全部分区</option></select></label>
+        <span class="spacer"></span>
+        <input id="table-search" type="search" placeholder="过滤单元 ID / 事件…">
+      </div>
+      <div class="table-scroll">
+        <table id="cells-table">
+          <thead><tr>
+            <th>单元 ID</th><th>列</th><th>行</th><th>计数</th>
+            <th>经度区间 [low, high)</th><th>纬度区间 [low, high)</th><th>分区分布</th><th>操作</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="hint" id="table-summary"></p>
+    </div>
+  </section>
+
+  <!-- ④ 守恒核对 -->
+  <section class="panel" data-panel="reconcile">
+    <div class="card">
+      <div class="filter-bar">
+        <label>版本<select id="rec-version"><option value="">全部版本</option></select></label>
+        <label>时间分区<select id="rec-partition"><option value="">全部分区</option></select></label>
+        <span class="spacer"></span>
+        <button class="btn primary" id="btn-run-reconcile" type="button">运行守恒核对</button>
+      </div>
+      <div id="reconcile-results"></div>
+      <h3 class="mt">三口径逐单元对照（当前选择的版本/层级）</h3>
+      <div class="filter-bar">
+        <label>层级<select id="compare-level"></select></label>
+        <button class="btn" id="btn-compare" type="button">加载对照</button>
+      </div>
+      <div class="table-scroll">
+        <table id="compare-table">
+          <thead><tr><th>单元 ID</th><th>物化表（入仓写入）</th><th>底层汇总（细层 rollup）</th><th>直接计算（原始坐标重算）</th><th>状态</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ⑤ 隔离区 / 审计 -->
+  <section class="panel" data-panel="quarantine">
+    <div class="grid-two">
+      <div class="card">
+        <h2>隔离区</h2>
+        <p class="hint">越界坐标与缺失坐标不进任何格网单元，落隔离区等待修订；修订合法后状态变为「已恢复」，条目保留可审计。</p>
+        <div class="table-scroll">
+          <table id="quarantine-table">
+            <thead><tr><th>事件 ID</th><th>经度</th><th>纬度</th><th>时间</th><th>原因</th><th>状态</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <h3 class="mt">事件台账（含修订次数与原始坐标）</h3>
+        <div class="table-scroll tall">
+          <table id="events-table">
+            <thead><tr><th>事件 ID</th><th>状态</th><th>经度</th><th>纬度</th><th>时间分区</th><th>修订</th><th>隔离原因</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>审计日志（不可变）</h2>
+        <p class="hint">导入、撤回、修订、隔离、建版均留痕；修订必含先 <code>withdraw</code> 后重新计入。</p>
+        <div id="audit-list" class="audit-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <span>规则：半开区间 [low, high) · 变更线 ±180° 归一最左列 · 极点 ±90° 归入首/末行 · 浮点吸附容差 1e-9（相对步长）</span>
+  </footer>
+</div>
+
+<script src="grid.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
